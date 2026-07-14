@@ -1,4 +1,4 @@
-"""Evaluation metrics for probabilistic load forecasting. """
+"""Metrics for probabilistic load forecasting."""
 
 import numpy as np
 import pandas as pd
@@ -8,12 +8,7 @@ from typing import Optional
 
 
 def _pinball_loss_elementwise(y_true: np.ndarray, y_pred: np.ndarray, tau: float) -> np.ndarray:
-    """Per-observation pinball loss, without averaging.
-
-    Needed for the Diebold-Mariano test below, which requires the raw
-    per-timestep loss sequence rather than a single aggregate value (which is
-    all sklearn's mean_pinball_loss exposes).
-    """
+    # per-observation loss, needed for the DM test below (sklearn only gives an averaged value)
     diff = y_true - y_pred
     return np.where(diff >= 0, tau * diff, (tau - 1) * diff)
 
@@ -23,18 +18,7 @@ def mean_pinball_loss(
     quantile_preds: np.ndarray,
     quantiles: np.ndarray,
 ) -> float:
-    """Compute mean pinball loss averaged over all quantile levels.
-
-    Parameters
-    ----------
-    y_true : Actual values, shape (n,)
-    quantile_preds : Predicted quantiles, shape (n, n_quantiles)
-    quantiles : Quantile levels, shape (n_quantiles,)
-
-    Returns
-    -------
-    Mean pinball loss across all quantiles (lower is better).
-    """
+    """Mean pinball loss across all quantile levels."""
     y_true = np.asarray(y_true, dtype=float)
     quantile_preds = np.asarray(quantile_preds, dtype=float)
     quantiles = np.asarray(quantiles, dtype=float)
@@ -50,21 +34,7 @@ def calibration_coverage(
     quantile_preds: np.ndarray,
     quantiles: np.ndarray,
 ) -> pd.DataFrame:
-    """Assess calibration by checking observed coverage at each quantile level.
-
-    For a well-calibrated model, the fraction of observations below the
-    tau-th quantile prediction should be approximately tau.
-
-    Parameters
-    ----------
-    y_true : Actual values, shape (n,)
-    quantile_preds : Predicted quantiles, shape (n, n_quantiles)
-    quantiles : Quantile levels, shape (n_quantiles,)
-
-    Returns
-    -------
-    DataFrame with columns: quantile, nominal, observed
-    """
+    """For each quantile level, what fraction of actuals fell below it (should ~= the level)."""
     y_true = np.asarray(y_true, dtype=float)
     results = []
     for j, tau in enumerate(quantiles):
@@ -79,25 +49,10 @@ def interval_coverage(
     quantiles: np.ndarray,
     nominal_level: float = 0.90,
 ) -> dict:
-    """Check if a nominal X% prediction interval has ~X% coverage.
-
-    Uses the symmetric interval: [quantile at (1-level)/2, quantile at (1+level)/2].
-
-    Parameters
-    ----------
-    y_true : Actual values
-    quantile_preds : shape (n, n_quantiles)
-    quantiles : Quantile levels
-    nominal_level : e.g. 0.90 for 90% interval
-
-    Returns
-    -------
-    Dict with nominal_level, lower_q, upper_q, observed_coverage
-    """
+    """Observed coverage of the central interval at the given nominal level (e.g. 0.90)."""
     lower_q = (1 - nominal_level) / 2
     upper_q = 1 - lower_q
 
-    # Find nearest quantile indices
     lower_idx = np.argmin(np.abs(quantiles - lower_q))
     upper_idx = np.argmin(np.abs(quantiles - upper_q))
 
@@ -122,24 +77,7 @@ def diebold_mariano_test(
     quantiles: np.ndarray,
     alternative: str = "two-sided",
 ) -> dict:
-    """Diebold-Mariano test comparing two sets of quantile forecasts.
-
-    Tests H0: E[L_A - L_B] = 0, where L is the pinball loss.
-    A negative test statistic means model A has lower loss (is better).
-
-    Parameters
-    ----------
-    y_true : Actual values, shape (n,)
-    preds_a : Quantile predictions from model A, shape (n, n_quantiles)
-    preds_b : Quantile predictions from model B, shape (n, n_quantiles)
-    quantiles : Quantile levels
-    alternative : 'two-sided', 'less' (A < B), or 'greater' (A > B)
-
-    Returns
-    -------
-    Dict with test_statistic, p_value, mean_diff (negative = A better)
-    """
-    # Compute per-observation average pinball loss
+    """Diebold-Mariano test (1995) on pinball loss, HAC/Newey-West variance. Negative stat = A better."""
     y_true = np.asarray(y_true, dtype=float)
     loss_a = np.zeros(len(y_true))
     loss_b = np.zeros(len(y_true))
@@ -149,14 +87,11 @@ def diebold_mariano_test(
     loss_a /= len(quantiles)
     loss_b /= len(quantiles)
 
-    d = loss_a - loss_b  # loss differences
+    d = loss_a - loss_b
 
-    # Newey-West style variance (simple version with lag-1 autocorrelation)
     n = len(d)
     d_mean = np.mean(d)
-    # Use HAC variance estimator
     gamma_0 = np.var(d, ddof=1)
-    # Truncation at h = int(n^(1/3))
     h = max(1, int(n ** (1.0 / 3.0)))
     hac_var = gamma_0
     for k in range(1, h + 1):

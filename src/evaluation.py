@@ -1,14 +1,4 @@
-"""Rolling-origin (expanding window) evaluation framework.
-
-Implements a strict temporal backtesting scheme:
-- The training set grows with each fold (expanding window).
-- The test set is always one month ahead of the training cutoff.
-- No information from the test period or later leaks into training,
-  preprocessing, or feature construction.
-
-This mirrors the GEFCom2014 competition structure, where each round
-reveals one more month of data.
-"""
+"""Rolling-origin (expanding window) backtest: train grows each fold, test = next month."""
 
 import numpy as np
 import pandas as pd
@@ -18,17 +8,11 @@ from src.data import get_task_splits, load_benchmark
 from src.features import build_features, get_feature_columns
 from src.baselines import SeasonalNaiveBaseline, ClimatologyBaseline
 from src.model import LightGBMQuantileModel
-from src.metrics import mean_pinball_loss, diebold_mariano_test
+from src.metrics import mean_pinball_loss, diebold_mariano_test, calibration_coverage, interval_coverage
 
 
 def create_task_based_splits(config: dict[str, Any]) -> list[dict]:
-    """Create train/test splits following the GEFCom2014 competition rounds.
-
-    Uses the actual task boundaries (data.get_task_splits): fold k trains on
-    everything through round k and tests on round k+1's month. This gives
-    15 folds total instead of scanning every month, which is much cheaper
-    to run.
-    """
+    """Fold k trains through round k, tests on round k+1's month (15 folds total)."""
     data_dir = config["data"]["raw_dir"]
     task_splits = get_task_splits(data_dir)
 
@@ -60,19 +44,6 @@ def run_evaluation(
     config: dict[str, Any],
     quantile_step: int = 5,
 ) -> dict:
-    """Run rolling-origin evaluation of the baselines and LightGBM.
-
-    Parameters
-    ----------
-    df : Prepared dataset (load + temperature, datetime index).
-    config : Experiment configuration.
-    quantile_step : Fit every N-th quantile level directly for LightGBM
-                    (the rest are interpolated); use 1 to fit all 99.
-
-    Returns
-    -------
-    Dict with per-fold and aggregate results.
-    """
     data_dir = config["data"]["raw_dir"]
     quantiles = get_quantiles(config)
     splits = create_task_based_splits(config)
@@ -88,13 +59,12 @@ def run_evaluation(
         lookback_years=config.get("baselines", {}).get("climatology", {}).get("lookback_years")
     )
 
-    # Features are built once on the whole series: every lag is capped to be
-    # >= the longest possible test month, so this can never leak test-period
-    # values into a fold's training features (see src/features.py).
+    # built once on the whole series -- safe since lags are capped, see features.py
     full_featured = build_features(df, config)
     feature_cols = get_feature_columns(full_featured)
 
     fold_results = []
+    calibration_curves = []
     last_fold_predictions = None
 
     for split in splits:
@@ -177,6 +147,13 @@ def run_evaluation(
         loss_lgb = mean_pinball_loss(y_test, preds_lgb, quantiles)
         print(f"  LightGBM pinball loss: {loss_lgb:.2f}")
 
+        # --- Calibration ---
+        coverage_90 = interval_coverage(y_test, preds_lgb, quantiles, nominal_level=0.90)
+        coverage_50 = interval_coverage(y_test, preds_lgb, quantiles, nominal_level=0.50)
+        print(f"  90% interval coverage: {coverage_90['observed_coverage']:.3f} (nominal: 0.900)")
+        print(f"  50% interval coverage: {coverage_50['observed_coverage']:.3f} (nominal: 0.500)")
+        calibration_curves.append(calibration_coverage(y_test, preds_lgb, quantiles))
+
         # --- Diebold-Mariano tests ---
         dm_naive_vs_clim = diebold_mariano_test(y_test, preds_naive, preds_clim, quantiles, "two-sided")
         dm_clim_vs_benchmark = diebold_mariano_test(y_test, preds_clim, preds_benchmark, quantiles, "two-sided")
@@ -193,6 +170,8 @@ def run_evaluation(
             "loss_climatology": loss_clim,
             "loss_benchmark": loss_benchmark,
             "loss_lgb": loss_lgb,
+            "coverage_90": coverage_90["observed_coverage"],
+            "coverage_50": coverage_50["observed_coverage"],
             "dm_naive_vs_clim_stat": dm_naive_vs_clim["test_statistic"],
             "dm_naive_vs_clim_pval": dm_naive_vs_clim["p_value"],
             "dm_clim_vs_benchmark_stat": dm_clim_vs_benchmark["test_statistic"],
@@ -233,6 +212,8 @@ def run_evaluation(
         "lightgbm": {
             "mean_pinball": results_df["loss_lgb"].mean(),
             "std_pinball": results_df["loss_lgb"].std(),
+            "mean_coverage_90": results_df["coverage_90"].mean(),
+            "mean_coverage_50": results_df["coverage_50"].mean(),
         },
         "dm_naive_vs_clim_significant": (results_df["dm_naive_vs_clim_pval"] < 0.05).mean(),
         "dm_clim_vs_benchmark_significant": (results_df["dm_clim_vs_benchmark_pval"] < 0.05).mean(),
@@ -252,6 +233,10 @@ def run_evaluation(
           f"+/- {summary['benchmark']['std_pinball']:.2f}")
     print(f"LightGBM:        {summary['lightgbm']['mean_pinball']:.2f} "
           f"+/- {summary['lightgbm']['std_pinball']:.2f}")
+    print(f"LightGBM 90% interval coverage (target 0.90): "
+          f"{summary['lightgbm']['mean_coverage_90']:.3f}")
+    print(f"LightGBM 50% interval coverage (target 0.50): "
+          f"{summary['lightgbm']['mean_coverage_50']:.3f}")
     print(f"DM test significant (naive vs climatology): "
           f"{summary['dm_naive_vs_clim_significant']*100:.0f}% of folds")
     print(f"DM test significant (climatology vs benchmark): "
@@ -261,8 +246,16 @@ def run_evaluation(
     print(f"DM test significant (LightGBM better than benchmark): "
           f"{summary['dm_lgb_vs_benchmark_significant']*100:.0f}% of folds")
 
+    # mean observed coverage per quantile level, averaged across folds
+    calibration_curve = (
+        pd.concat(calibration_curves)
+        .groupby("quantile", as_index=False)
+        .agg(nominal=("nominal", "first"), observed=("observed", "mean"))
+    )
+
     return {
         "fold_results": results_df,
         "summary": summary,
         "last_fold_predictions": last_fold_predictions,
+        "calibration_curve": calibration_curve,
     }

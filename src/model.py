@@ -1,12 +1,4 @@
-"""LightGBM-based quantile regression model.
-
-LightGBM's `quantile` objective fits one model per quantile level (there's
-no single model that natively predicts many quantiles at once). Fitting all
-99 levels is expensive, so `quantile_step` lets you fit only every Nth level
-directly; the levels in between are filled in by linear interpolation at
-predict time, and predictions are sorted per row to guarantee valid
-(non-crossing) quantiles.
-"""
+"""LightGBM quantile regression: one model per quantile level, interpolated in between."""
 
 import numpy as np
 import pandas as pd
@@ -35,7 +27,6 @@ class LightGBMQuantileModel:
         }
 
     def _median_model(self) -> lgb.LGBMRegressor:
-        """Return the fitted model whose quantile level is closest to 0.5."""
         fitted_idx = np.array(sorted(self.models.keys()))
         closest = fitted_idx[np.argmin(np.abs(self.quantiles[fitted_idx] - 0.5))]
         return self.models[closest]
@@ -83,23 +74,11 @@ class LightGBMQuantileModel:
             frac = (j - lo) / (hi - lo)
             out[:, j] = fitted_preds[:, pos - 1] + frac * (fitted_preds[:, pos] - fitted_preds[:, pos - 1])
 
-        # Enforce monotonic (non-crossing) quantiles
-        return np.sort(out, axis=1)
+        return np.sort(out, axis=1)  # avoid quantile crossing
 
     def shap_values(self, X: pd.DataFrame) -> tuple[np.ndarray, float]:
-        """Per-prediction SHAP values from the median-quantile (tau~=0.5) model.
-
-        Explains that one model's predictions rather than all ~20 fitted
-        quantile models, since SHAP on every quantile level would be both
-        expensive and mostly redundant (the same features drive every
-        quantile's prediction, just by different amounts).
-
-        Returns
-        -------
-        (shap_values, base_value): shap_values has shape (n_samples,
-        n_features) and sums with base_value to reconstruct each prediction;
-        base_value is the model's average prediction over its training data.
-        """
+        # explains the median model only -- doing this for all ~20 quantile models would be
+        # expensive and redundant, since the same features drive every quantile's prediction
         model = self._median_model()
         explainer = shap.TreeExplainer(model)
         values = explainer.shap_values(X)

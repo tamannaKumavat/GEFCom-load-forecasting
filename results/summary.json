@@ -14,7 +14,9 @@
   },
   "lightgbm": {
     "mean_pinball": 3.875742902172886,
-    "std_pinball": 1.508786247192496
+    "std_pinball": 1.508786247192496,
+    "mean_coverage_90": 0.8269625789383854,
+    "mean_coverage_50": 0.3953048728451954
   },
   "dm_naive_vs_clim_significant": 0.8666666666666667,
   "dm_clim_vs_benchmark_significant": 1.0,

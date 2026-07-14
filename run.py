@@ -44,9 +44,45 @@ def main() -> None:
     results_dir = Path("results")
     results_dir.mkdir(exist_ok=True)
 
-    results["fold_results"].to_csv(results_dir / "fold_results.csv", index=False)
+    fold_results = results["fold_results"]
+    fold_results.to_csv(results_dir / "fold_results.csv", index=False)
     with open(results_dir / "summary.json", "w") as f:
         json.dump(results["summary"], f, indent=2, default=str)
+
+    # Per-fold comparison: shows LightGBM's improvement is consistent across
+    # folds, not just a good average -- backs up the Diebold-Mariano results.
+    fig, ax = plt.subplots(figsize=(10, 5))
+    for col, label in [
+        ("loss_seasonal_naive", "Seasonal-naive"),
+        ("loss_climatology", "Climatology"),
+        ("loss_benchmark", "Official benchmark"),
+        ("loss_lgb", "LightGBM"),
+    ]:
+        ax.plot(fold_results["fold"], fold_results[col], marker="o", markersize=4, label=label)
+    ax.set_xlabel("Fold")
+    ax.set_ylabel("Pinball loss")
+    ax.set_title("Pinball loss by fold, all methods")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(results_dir / "fold_comparison.png", dpi=150)
+    plt.close(fig)
+
+    calib = results["calibration_curve"]
+    calib.to_csv(results_dir / "calibration_curve.csv", index=False)
+
+    # Reliability diagram: observed vs. nominal coverage at every quantile
+    # level, averaged across all folds. A well-calibrated model's curve
+    # should sit on the y=x diagonal.
+    fig, ax = plt.subplots(figsize=(6, 6))
+    ax.plot([0, 1], [0, 1], "k--", lw=1, label="Perfect calibration")
+    ax.plot(calib["nominal"], calib["observed"], marker="o", markersize=3, label="LightGBM")
+    ax.set_xlabel("Nominal quantile level")
+    ax.set_ylabel("Observed coverage")
+    ax.set_title("Calibration: observed vs. nominal coverage (averaged across folds)")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(results_dir / "calibration_plot.png", dpi=150)
+    plt.close(fig)
 
     lf = results["last_fold_predictions"]
     if lf is not None:
