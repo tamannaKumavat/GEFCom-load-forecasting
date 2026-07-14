@@ -1,0 +1,30 @@
+seed: 42
+
+data:
+  path: data/raw/load.csv
+  target_column: load
+  datetime_column: timestamp
+  freq: H
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
+
+model:
+  name: lstm
+  hidden_size: 128
+  num_layers: 2
+  dropout: 0.2
+  sequence_length: 168
+  horizon: 24
+
+training:
+  batch_size: 64
+  epochs: 100
+  learning_rate: 0.001
+  early_stopping_patience: 10
+  device: cpu
+
+logging:
+  log_dir: logs
+  checkpoint_dir: checkpoints
+  log_every_n_steps: 50
