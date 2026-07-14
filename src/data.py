@@ -101,6 +101,32 @@ def _read_task_train(
     return out, prev_date
  
  
+def load_benchmark(
+    data_dir: str, task: int, prev_date: Optional[pd.Timestamp] = None
+) -> pd.Series:
+    """Load the official GEFCom2014 benchmark point forecast for one task.
+
+    L<task>-benchmark.csv covers the same period as L<task+1>-train.csv,
+    i.e. it's the reference forecast for the test month of the rolling-origin
+    fold that trains through ``task``. All 99 quantile columns hold the same
+    value per hour (it's a flat point forecast, not a real probabilistic
+    spread), so this returns a single series rather than 99 redundant columns.
+
+    ``prev_date`` disambiguates the file's month/day-ambiguous timestamps
+    (e.g. "1012010" could mean Jan 1 or Oct 1, 2010) the same way
+    ``load_all_tasks`` threads it across consecutive training files. Pass the
+    corresponding fold's ``train_end`` so the benchmark month resolves next
+    to it rather than defaulting to the first calendar-valid guess.
+    """
+    path = Path(data_dir) / "Load" / f"Task {task}" / f"L{task}-benchmark.csv"
+    if not path.exists():
+        raise FileNotFoundError(f"{path} not found.")
+
+    raw = pd.read_csv(path)
+    datetimes, _ = _parse_timestamps(raw["TIMESTAMP"], prev_date=prev_date)
+    return pd.Series(raw["0.5"].values, index=datetimes, name="benchmark")
+
+
 def _read_solution(data_dir: Path) -> pd.DataFrame:
     """Read the Task-15 solution (Dec 2011 actuals + temperature).
  

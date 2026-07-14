@@ -1,0 +1,17 @@
+{
+  "n_folds": 15,
+  "seasonal_naive": {
+    "mean_pinball": 12.999750463542007,
+    "std_pinball": 4.34727292393591
+  },
+  "climatology": {
+    "mean_pinball": 8.327253947992943,
+    "std_pinball": 4.5504709245631005
+  },
+  "benchmark": {
+    "mean_pinball": 15.143282322068613,
+    "std_pinball": 7.595663144420847
+  },
+  "dm_naive_vs_clim_significant": 0.8666666666666667,
+  "dm_clim_vs_benchmark_significant": 1.0
+}

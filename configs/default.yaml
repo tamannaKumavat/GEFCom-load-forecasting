@@ -9,6 +9,23 @@ data:
   rolling_windows_hours: [24, 168]
   use_temperature: true
 
+evaluation:
+  # Quantiles to predict (1st through 99th percentile)
+  quantiles_start: 0.01
+  quantiles_end: 0.99
+  quantiles_step: 0.01
+  # Number of forecasting rounds to use for backtesting
+  # Set to null to use all available rounds, or a small int for quick runs
+  max_rounds: null
+  # Forecast horizon in hours (one month ~ 720h, but varies)
+  forecast_horizon_days: 31
+
+baselines:
+  seasonal_naive:
+    lag_weeks: 1
+  climatology:
+    lookback_years: null
+
 model:
   name: lightgbm
   objective: regression

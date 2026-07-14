@@ -3,31 +3,19 @@
 import numpy as np
 import pandas as pd
 from scipy import stats
+from sklearn.metrics import mean_pinball_loss as _sklearn_pinball_loss
 from typing import Optional
 
 
 def _pinball_loss_elementwise(y_true: np.ndarray, y_pred: np.ndarray, tau: float) -> np.ndarray:
-    """Per-observation pinball loss, without averaging."""
+    """Per-observation pinball loss, without averaging.
+
+    Needed for the Diebold-Mariano test below, which requires the raw
+    per-timestep loss sequence rather than a single aggregate value (which is
+    all sklearn's mean_pinball_loss exposes).
+    """
     diff = y_true - y_pred
     return np.where(diff >= 0, tau * diff, (tau - 1) * diff)
-
-
-def pinball_loss(y_true: np.ndarray, y_pred: np.ndarray, tau: float) -> float:
-    """Compute pinball (quantile) loss for a single quantile level.
-
-    Parameters
-    ----------
-    y_true : Actual values, shape (n,)
-    y_pred : Predicted quantile values, shape (n,)
-    tau : Quantile level in (0, 1)
-
-    Returns
-    -------
-    Mean pinball loss (lower is better).
-    """
-    y_true = np.asarray(y_true, dtype=float)
-    y_pred = np.asarray(y_pred, dtype=float)
-    return float(np.mean(_pinball_loss_elementwise(y_true, y_pred, tau)))
 
 
 def mean_pinball_loss(
@@ -53,7 +41,7 @@ def mean_pinball_loss(
 
     total = 0.0
     for j, tau in enumerate(quantiles):
-        total += pinball_loss(y_true, quantile_preds[:, j], tau)
+        total += _sklearn_pinball_loss(y_true, quantile_preds[:, j], alpha=tau)
     return total / len(quantiles)
 
 
