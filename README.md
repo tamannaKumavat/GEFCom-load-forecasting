@@ -1,4 +1,4 @@
-# GEFCom Load Forecasting
+# Probabilistic Electricity Load Forecasting (GEFCom2014)
 
 ## Problem
 
