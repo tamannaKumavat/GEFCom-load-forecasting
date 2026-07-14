@@ -1,10 +1,12 @@
 """Entry point: initially load the GEFCom2014 load-track data."""
 
+from src.config import load_config
 from src.data import load_all_tasks
 
 
 def main() -> None:
-    data = load_all_tasks("data")
+    config = load_config("configs/default.yaml")
+    data = load_all_tasks(config["data"]["raw_dir"])
     print(data.head())
 
 

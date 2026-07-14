@@ -32,3 +32,10 @@ python run.py
 
 Loads and concatenates all 15 task files (plus the Task 15 solution) into a
 single continuous hourly series with load and temperature columns.
+
+## Exploratory analysis
+
+[notebooks/data_analyis.ipynb](notebooks/data_analyis.ipynb) covers missing
+data, seasonality, the load-temperature relationship, trend, stationarity,
+and autocorrelation, and motivates the feature choices in
+`configs/default.yaml`.

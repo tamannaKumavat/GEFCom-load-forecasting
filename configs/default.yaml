@@ -1,28 +1,28 @@
 seed: 42
 
 data:
-  path: data/raw/load.csv
+  raw_dir: data
   target_column: load
-  datetime_column: timestamp
-  freq: H
-  train_split: 0.7
-  val_split: 0.15
-  test_split: 0.15
+  datetime_column: datetime
+  freq: h
+  load_lags_hours: [168, 336, 504, 672, 8760]
+  rolling_windows_hours: [24, 168]
+  use_temperature: true
 
 model:
-  name: lstm
-  hidden_size: 128
-  num_layers: 2
-  dropout: 0.2
-  sequence_length: 168
-  horizon: 24
+  name: lightgbm
+  objective: regression
+  n_estimators: 500
+  learning_rate: 0.05
+  num_leaves: 63
+  max_depth: -1
+  min_child_samples: 20
+  subsample: 0.8
+  colsample_bytree: 0.8
 
 training:
-  batch_size: 64
-  epochs: 100
-  learning_rate: 0.001
-  early_stopping_patience: 10
-  device: cpu
+  early_stopping_rounds: 50
+  eval_metric: mae
 
 logging:
   log_dir: logs
