@@ -15,7 +15,9 @@ import pandas as pd
 from typing import Any
 from src.config import get_quantiles
 from src.data import get_task_splits, load_benchmark
+from src.features import build_features, get_feature_columns
 from src.baselines import SeasonalNaiveBaseline, ClimatologyBaseline
+from src.model import LightGBMQuantileModel
 from src.metrics import mean_pinball_loss, diebold_mariano_test
 
 
@@ -56,13 +58,16 @@ def create_task_based_splits(config: dict[str, Any]) -> list[dict]:
 def run_evaluation(
     df: pd.DataFrame,
     config: dict[str, Any],
+    quantile_step: int = 5,
 ) -> dict:
-    """Run rolling-origin evaluation of the seasonal-naive and climatology baselines.
+    """Run rolling-origin evaluation of the baselines and LightGBM.
 
     Parameters
     ----------
     df : Prepared dataset (load + temperature, datetime index).
     config : Experiment configuration.
+    quantile_step : Fit every N-th quantile level directly for LightGBM
+                    (the rest are interpolated); use 1 to fit all 99.
 
     Returns
     -------
@@ -83,7 +88,14 @@ def run_evaluation(
         lookback_years=config.get("baselines", {}).get("climatology", {}).get("lookback_years")
     )
 
+    # Features are built once on the whole series: every lag is capped to be
+    # >= the longest possible test month, so this can never leak test-period
+    # values into a fold's training features (see src/features.py).
+    full_featured = build_features(df, config)
+    feature_cols = get_feature_columns(full_featured)
+
     fold_results = []
+    last_fold_predictions = None
 
     for split in splits:
         fold = split["fold"]
@@ -129,9 +141,47 @@ def run_evaluation(
         loss_benchmark = mean_pinball_loss(y_test, preds_benchmark, quantiles)
         print(f"  Official benchmark pinball loss: {loss_benchmark:.2f}")
 
+        # --- Main model: LightGBM Quantile ---
+        print("  Building features...")
+        train_feat = full_featured[train_mask].copy()
+        test_feat = full_featured[test_mask].loc[test_index].copy()
+
+        # Drop rows with NaN features or target in training
+        train_feat = train_feat.dropna(subset=["load"] + feature_cols)
+        X_train = train_feat[feature_cols]
+        y_train = train_feat["load"].values
+
+        # Fill any remaining NaN test features with the training median
+        X_test = test_feat[feature_cols].copy()
+        for col in feature_cols:
+            if X_test[col].isna().any():
+                X_test[col] = X_test[col].fillna(X_train[col].median())
+
+        # Validation set: last month of training, for early stopping
+        val_cutoff = split["train_end"] - pd.DateOffset(months=1)
+        val_mask = X_train.index >= val_cutoff
+        if val_mask.sum() > 100:
+            X_val, y_val = X_train[val_mask], y_train[val_mask]
+            X_train_fit, y_train_fit = X_train[~val_mask], y_train[~val_mask]
+        else:
+            X_val, y_val = None, None
+            X_train_fit, y_train_fit = X_train, y_train
+
+        print(f"  Training LightGBM: {len(X_train_fit)} train, "
+              f"{len(X_val) if X_val is not None else 0} val, "
+              f"{len(X_test)} test samples")
+
+        lgb_model = LightGBMQuantileModel(config, quantiles)
+        lgb_model.fit(X_train_fit, y_train_fit, X_val, y_val, quantile_step=quantile_step)
+        preds_lgb = lgb_model.predict(X_test)
+        loss_lgb = mean_pinball_loss(y_test, preds_lgb, quantiles)
+        print(f"  LightGBM pinball loss: {loss_lgb:.2f}")
+
         # --- Diebold-Mariano tests ---
         dm_naive_vs_clim = diebold_mariano_test(y_test, preds_naive, preds_clim, quantiles, "two-sided")
         dm_clim_vs_benchmark = diebold_mariano_test(y_test, preds_clim, preds_benchmark, quantiles, "two-sided")
+        dm_lgb_vs_clim = diebold_mariano_test(y_test, preds_lgb, preds_clim, quantiles, "less")
+        dm_lgb_vs_benchmark = diebold_mariano_test(y_test, preds_lgb, preds_benchmark, quantiles, "less")
 
         fold_results.append({
             "fold": fold,
@@ -142,11 +192,26 @@ def run_evaluation(
             "loss_seasonal_naive": loss_naive,
             "loss_climatology": loss_clim,
             "loss_benchmark": loss_benchmark,
+            "loss_lgb": loss_lgb,
             "dm_naive_vs_clim_stat": dm_naive_vs_clim["test_statistic"],
             "dm_naive_vs_clim_pval": dm_naive_vs_clim["p_value"],
             "dm_clim_vs_benchmark_stat": dm_clim_vs_benchmark["test_statistic"],
             "dm_clim_vs_benchmark_pval": dm_clim_vs_benchmark["p_value"],
+            "dm_lgb_vs_clim_stat": dm_lgb_vs_clim["test_statistic"],
+            "dm_lgb_vs_clim_pval": dm_lgb_vs_clim["p_value"],
+            "dm_lgb_vs_benchmark_stat": dm_lgb_vs_benchmark["test_statistic"],
+            "dm_lgb_vs_benchmark_pval": dm_lgb_vs_benchmark["p_value"],
         })
+
+        shap_vals, shap_base_value = lgb_model.shap_values(X_test)
+        last_fold_predictions = {
+            "y_true": y_test,
+            "preds_lgb": preds_lgb,
+            "test_index": test_index,
+            "X_test": X_test,
+            "shap_values": shap_vals,
+            "shap_base_value": shap_base_value,
+        }
 
     # --- Aggregate results ---
     results_df = pd.DataFrame(fold_results)
@@ -165,8 +230,14 @@ def run_evaluation(
             "mean_pinball": results_df["loss_benchmark"].mean(),
             "std_pinball": results_df["loss_benchmark"].std(),
         },
+        "lightgbm": {
+            "mean_pinball": results_df["loss_lgb"].mean(),
+            "std_pinball": results_df["loss_lgb"].std(),
+        },
         "dm_naive_vs_clim_significant": (results_df["dm_naive_vs_clim_pval"] < 0.05).mean(),
         "dm_clim_vs_benchmark_significant": (results_df["dm_clim_vs_benchmark_pval"] < 0.05).mean(),
+        "dm_lgb_vs_clim_significant": (results_df["dm_lgb_vs_clim_pval"] < 0.05).mean(),
+        "dm_lgb_vs_benchmark_significant": (results_df["dm_lgb_vs_benchmark_pval"] < 0.05).mean(),
     }
 
     print("\n" + "=" * 60)
@@ -179,12 +250,19 @@ def run_evaluation(
           f"+/- {summary['climatology']['std_pinball']:.2f}")
     print(f"Official benchmark: {summary['benchmark']['mean_pinball']:.2f} "
           f"+/- {summary['benchmark']['std_pinball']:.2f}")
+    print(f"LightGBM:        {summary['lightgbm']['mean_pinball']:.2f} "
+          f"+/- {summary['lightgbm']['std_pinball']:.2f}")
     print(f"DM test significant (naive vs climatology): "
           f"{summary['dm_naive_vs_clim_significant']*100:.0f}% of folds")
     print(f"DM test significant (climatology vs benchmark): "
           f"{summary['dm_clim_vs_benchmark_significant']*100:.0f}% of folds")
+    print(f"DM test significant (LightGBM better than climatology): "
+          f"{summary['dm_lgb_vs_clim_significant']*100:.0f}% of folds")
+    print(f"DM test significant (LightGBM better than benchmark): "
+          f"{summary['dm_lgb_vs_benchmark_significant']*100:.0f}% of folds")
 
     return {
         "fold_results": results_df,
         "summary": summary,
+        "last_fold_predictions": last_fold_predictions,
     }

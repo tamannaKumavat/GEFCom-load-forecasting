@@ -12,6 +12,12 @@
     "mean_pinball": 15.143282322068613,
     "std_pinball": 7.595663144420847
   },
+  "lightgbm": {
+    "mean_pinball": 3.875742902172886,
+    "std_pinball": 1.508786247192496
+  },
   "dm_naive_vs_clim_significant": 0.8666666666666667,
-  "dm_clim_vs_benchmark_significant": 1.0
+  "dm_clim_vs_benchmark_significant": 1.0,
+  "dm_lgb_vs_clim_significant": 1.0,
+  "dm_lgb_vs_benchmark_significant": 1.0
 }

@@ -5,8 +5,6 @@ data:
   target_column: load
   datetime_column: datetime
   freq: h
-  load_lags_hours: [168, 336, 504, 672, 8760]
-  rolling_windows_hours: [24, 168]
   use_temperature: true
 
 evaluation:
@@ -25,6 +23,25 @@ baselines:
     lag_weeks: 1
   climatology:
     lookback_years: null
+
+features:
+  # Calendar features
+  use_hour: true
+  use_dayofweek: true
+  use_month: true
+  use_is_weekend: true
+  # Temperature (note: using actual temps is an assumption; see README)
+  use_temperature: true
+  # Lagged load features. Capped to >= 744h (the longest possible forecast
+  # month) so a lag can never reach into the test period itself -- this
+  # currently leaves only the 1-year lag; see discussion in src/features.py.
+  load_lags_hours: [8760]  # 1yr
+  # Rolling statistics on historical load (anchored to load_lags_hours,
+  # so these inherit the same leakage-safety guarantee automatically)
+  rolling_windows_hours: [168, 720]  # 1 week, ~1 month
+  # Temperature lags: same leakage constraint as load lags, and there's no
+  # well-motivated long-horizon temp lag, so left empty for now.
+  temp_lags_hours: []
 
 model:
   name: lightgbm
