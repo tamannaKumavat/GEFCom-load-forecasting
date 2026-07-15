@@ -121,6 +121,29 @@ def main() -> None:
         plt.savefig(results_dir / "shap_importance_bar.png", dpi=150)
         plt.close()
 
+        # Actual vs. predicted for the last fold's test month, with 50%/90%
+        # intervals -- shows what a forecast actually looks like, not just
+        # aggregate loss/calibration numbers.
+        q50 = np.argmin(np.abs(quantiles - 0.5))
+        q05, q95 = np.argmin(np.abs(quantiles - 0.05)), np.argmin(np.abs(quantiles - 0.95))
+        q25, q75 = np.argmin(np.abs(quantiles - 0.25)), np.argmin(np.abs(quantiles - 0.75))
+        preds_lgb = lf["preds_lgb"]
+
+        fig, ax = plt.subplots(figsize=(12, 5))
+        ax.fill_between(lf["test_index"], preds_lgb[:, q05], preds_lgb[:, q95],
+                         alpha=0.2, color="C0", label="90% interval")
+        ax.fill_between(lf["test_index"], preds_lgb[:, q25], preds_lgb[:, q75],
+                         alpha=0.35, color="C0", label="50% interval")
+        ax.plot(lf["test_index"], preds_lgb[:, q50], color="C0", lw=1.2, label="Median prediction")
+        ax.plot(lf["test_index"], lf["y_true"], color="black", lw=1, label="Actual load")
+        ax.set_xlabel("Time")
+        ax.set_ylabel("Load")
+        ax.set_title("Forecast vs. actual -- last fold's test month")
+        ax.legend()
+        fig.tight_layout()
+        fig.savefig(results_dir / "forecast_example.png", dpi=150)
+        plt.close(fig)
+
     print(f"\nResults saved to {results_dir}/")
     print("Done!")
 

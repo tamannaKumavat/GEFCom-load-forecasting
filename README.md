@@ -111,6 +111,9 @@ Run `python run.py` to reproduce (99 quantiles, 15 folds):
 | Official GEFCom2014 benchmark | 15.14 +/- 7.60 |
 | LightGBM | 3.88 +/- 1.51 |
 
+`results/forecast_example.png` shows actual vs. predicted load (median + 50%/90%
+intervals) for one test month.
+
 LightGBM beats climatology and the benchmark significantly (Diebold-Mariano,
 p < 0.05) in 100% of folds -- see `results/fold_comparison.png`. Full numbers
 in `results/summary.json`, feature importance in `results/shap_summary.png`.
